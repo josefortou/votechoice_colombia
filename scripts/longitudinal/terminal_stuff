@@ -1,0 +1,2 @@
+cd data/lapop/downloaded_files
+for fname in *.csv; do sed 's/|/,/g' $fname > n_$fname; done
