@@ -1,0 +1,697 @@
+---
+title: 'Vote choice and conflict: 2018 Colombia'
+author: "DataPOL"
+date: "`r format(Sys.time(), '%d/%m/%y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# R chunk options
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# Libraries
+library(tidyverse) # tidy data manipulation
+library(texreg) # regression tables
+library(ggeffects) # tidy model predictions
+library(lme4) # multilevel models
+
+# Graphics theme
+theme_set(theme_light(base_size = 12))
+```
+
+## Cleaning
+
+We use the 2018 Colombia round of the Latin American Public Opinion Project (LAPOP) America's Barometer survey. We first download the data files directly from the web -- they are hosted in the Observatorio de la Democracia's website:
+
+```{r download-raw, eval = FALSE}
+# Data
+url_data <- "https://obsdemocracia.org/uploads/data_file/Colombia2018PUBv2_IsFad1S.csv"
+download.file(url_data, "data/datos_lapop_2018.csv")
+```
+
+The data need a fair amount of recoding to make it suitable for our analysis. We start by reading in the `.csv` file with the survey data:
+
+```{r load-raw}
+data <- read_delim("data/datos_lapop_2018.csv", delim = ";")
+```
+
+<!-- We follow by coding as `NA` some answers for all variables: -->
+
+```{r nas, echo = FALSE, eval = FALSE}
+data <- data %>%
+  na_if(".b") # "No responde"
+```
+
+Next, we recode a number of variables in the data. We overwrite variables when simply changing the format or labels, but keep the original variables when making more substantive changes to them:
+
+```{r recode}
+# Recode variables
+data <- data %>%
+  mutate(
+   ## geographic
+   # municipality code
+   municipio_code = str_remove(municipio, "8"),
+   # region
+   estratopri = factor( 
+     case_when(
+       estratopri == 811 ~ "Atlántica",
+       estratopri == 812 ~ "Bogotá",
+       estratopri == 813 ~ "Central",
+       estratopri == 814 ~ "Oriental",
+       estratopri == 815 ~ "Pacífica",
+       estratopri == 816 ~ "Amazonía/Orinoquía"
+     ), "Bogotá"),
+   # size of municipality
+   estratosec = fct_relevel( 
+     case_when(
+       estratosec == 1 ~ "Large",
+       estratosec == 2 ~ "Medium",
+       estratosec == 3 ~ "Small"
+     ), "Small", "Medium"),
+   ## socio-demographic
+   # gender
+   q1 = fct_relevel(
+      if_else(q1 == 1, "M", "F"), "M"
+   ),
+   # age in years
+   q2 = q2,
+   # education in years
+   ed = as.numeric(ed),
+   # education level
+   ed_sup = fct_relevel(
+      if_else(ed > 11, "Higher", "HS or lower"), "HS or lower"
+   ),
+   # working
+   colocup4a_work = fct_relevel(
+      case_when(
+         colocup4a %in% c(1, 2) ~ "Works",
+         colocup4a %in% c(3:8) ~ "Does not work"
+      ), "Does not work"
+   ),
+   # socio-economic group 3 categories
+   colestsoc_3c = fct_relevel(
+      case_when(
+         colestsoc_col %in% c(1, 2, 3) ~ "Lower",
+         colestsoc_col %in% c(4, 5, 6) ~ "Upper",
+         colestsoc_col == 7 ~ "Rural",
+      ), "Rural", "Lower", "Upper"
+   ),
+   # socio-economic group 3 categories v2
+   colestsoc_3c_v2 = fct_relevel(
+      case_when(
+         colestsoc_col %in% c(1, 2) ~ "Lower",
+         colestsoc_col %in% c(3, 4, 5, 6) ~ "Middle/upper",
+         colestsoc_col == 7 ~ "Rural",
+      ), "Rural", "Lower", "Middle/upper"
+   ),
+   # socio-economic group 4 categories
+   colestsoc_4c = fct_relevel(
+      case_when(
+         colestsoc_col %in% c(1, 2) ~ "Lower",
+         colestsoc_col %in% c(3, 4) ~ "Middle",
+         colestsoc_col %in% c(5, 6) ~ "Upper",
+         colestsoc_col == 7 ~ "Rural",
+         ), "Rural", "Lower", "Middle"
+   ),
+   # economic informality
+   formal = fct_relevel(
+      case_when(
+         formal == 1 ~ "Formal",
+         formal == 2 ~ "Informal"
+      ), "Informal"
+   ),
+   # family income
+   q10new = as.numeric(q10new),
+   # family income above minimum wage
+   q10new_min = fct_relevel(
+     if_else(q10new > 8, "Above min. wage", "Below min. wage"), "Below min. wage" 
+   ),
+   # ethnic identity: white
+   etid_white = fct_relevel(
+      case_when(
+         etid == 1 ~ "White",
+         etid %in% c(2, 3, 4, 5, 7) ~ "Other",
+      ), "Other"
+   ),
+   # ethnic identity: black
+   etid_black = fct_relevel(
+      case_when(
+         etid == 4 ~ "Black",
+         etid %in% c(1, 2, 3, 5, 7) ~ "Other",
+      ), "Other"
+   ),
+   # ethnic identity: indigenous
+   etid_ind = fct_relevel(
+      case_when(
+         etid == 3 ~ "Indigenous",
+         etid %in% c(1, 2, 4, 5, 7) ~ "Other",
+      ), "Other"
+   ),
+   # ethnic identity
+   etid = fct_relevel(
+      case_when(
+         etid == 1 ~ "White",
+         etid == 2 ~ "Mestizo",
+         etid == 3 ~ "Indigenous",
+         etid == 4 ~ "Black",
+         etid == 5 ~ "Mulato",
+         etid %in% c(".a", "7") ~ "Other/does not know",
+      ), "Other/does not know"
+   ),
+   # skin tone
+   colorr = na_if(as.numeric(colorr), 97),
+   ## evaluations and perceptions
+   # most important issue is security-related
+   a4_sec = fct_relevel(
+      case_when(
+         a4 %in% c(30, 05, 56, 22, 17, 862, 863, 864, 12, 14, 06, 27, 31, 
+                   33, 57) ~ "Security", 
+         a4 == ".b" ~ NA_character_,
+         TRUE ~ "Other issue"
+      ), "Other issue" 
+   ),
+   # sociotropic evaluation of the economy, last year
+   soct2 = fct_relevel(
+     case_when(
+       soct2 == 1 ~ "Better",
+       soct2 == 2 ~ "Same",
+       soct2 == 3 ~ "Worse",
+       soct2 == ".a" ~ NA_character_
+     ), "Worse", "Same"
+   ),
+   # idiosyncratic evaluation of the economy, last year
+   idio2 = fct_relevel(
+      case_when(
+         idio2 == 1 ~ "Better",
+         idio2 == 2 ~ "Same",
+         idio2 == 3 ~ "Worse",
+         idio2 == ".a" ~ NA_character_
+      ), "Worse", "Same"
+   ),
+   ## ideology
+   # left-right placement, 1-10 scale
+   l1_num = as.numeric(l1),
+   # left-right placement, 3 cat
+   l1_3c = fct_relevel(
+      case_when(
+         l1 %in% c(6, 7, 8, 9, 10) ~ "Right",
+         l1 %in% c(1, 2, 3, 4, 5) ~ "Left",
+         l1 == ".a" ~ "Do not know"
+      ), "Do not know"
+   ),
+   # left-right placement, 4 cat
+   l1_4c = fct_relevel(
+      case_when(
+         l1 %in% c(7, 8, 9, 10) ~ "Right",
+         l1 %in% c(1, 2, 3, 4) ~ "Left",
+         l1 %in% c(5, 6) ~ "Center",
+         l1 == ".a" ~ "Do not know"
+      ), "Do not know", "Center"
+   ),
+   # state intervention sum
+   ros_sum = na_if(
+      replace_na(as.numeric(ros1), 0) + 
+         replace_na(as.numeric(ros4), 0), 0
+   ),
+   # state redistribution sum
+   redist_sum = na_if(
+      replace_na(as.numeric(redist1), 0) + 
+         replace_na(as.numeric(redist2), 0) +
+         replace_na(as.numeric(redist3), 0), 0
+   ),
+   # social conservative sum
+   colideol_sum = na_if(
+      replace_na(as.numeric(colideol4b), 0) + 
+         replace_na(as.numeric(colideol4b), 0) +
+         replace_na(as.numeric(colideol4b), 0) +
+         replace_na(as.numeric(colideol4b), 0), 0
+   ),
+   ## conflict, peace and agreements
+   # negotiate or use force
+   colpaz1a = fct_relevel(
+      case_when(
+         colpaz1a == 1 ~ "Negotiation",
+         colpaz1a == 2 ~ "Military force",
+         colpaz1a %in% c("3", ".a") ~ "Both/do not know"
+      ), "Military force"
+   ),
+   # pro-peace attitudes
+   colpropaz1b = as.numeric(colpropaz1b),
+   colpropaz1cn = as.numeric(colpropaz1cn),
+   colpropaz13c = as.numeric(colpropaz13c),
+   colpropaz13j = as.numeric(colpropaz13j),
+   colpropaz13k = as.numeric(colpropaz13k),
+   colpropaz13m = as.numeric(colpropaz13m),
+   # pro-peace attitudes sum
+   colpropaz_sum = na_if(
+     replace_na(colpropaz1b, 0) + 
+       replace_na(colpropaz1cn, 0) + 
+       replace_na(colpropaz13c, 0) + 
+       replace_na(colpropaz13j, 0) +
+       replace_na(colpropaz13k, 0) + 
+       replace_na(colpropaz13m, 0), 0
+   ),
+   # in favor of modifying agreements
+   colpact20 = as.numeric(colpact20),
+   # approve of FARC participating in elections
+   colespa2a = as.numeric(colespa2a),
+   ## victimization
+   # victim of crime
+   vic1ext = fct_relevel(
+      case_when(
+         vic1ext == 1 ~ "Yes",
+         vic1ext == 2 ~ "No",
+         TRUE ~ NA_character_
+      ), "No"
+   ),
+   # threat to own security, 5 cat
+   aoj21_5c = fct_relevel(
+     case_when(
+        aoj21 == 3 ~ "Police or military",
+        aoj21 == 4 ~ "Organized crime",
+        aoj21 == 9 ~ "Guerrilla groups",
+        aoj21 == 10 ~ "BACRIM",
+        aoj21 == ".b" ~ NA_character_,
+        TRUE ~ "Others"
+     ), "Others"
+   ),
+   # feels secure/insecure in neighborhood
+   aoj11 = fct_relevel(
+     case_when(
+        aoj11 %in% c(1, 2) ~ "Secure",
+        aoj11 %in% c(3, 4) ~ "Insecure",
+        TRUE ~ NA_character_
+     ), "Insecure"
+   ),
+   # group that guarantees security, 5 cat
+   colaoj21a_5c = fct_relevel(
+      case_when(
+         colaoj21a == 3 ~ "Police or military",
+         colaoj21a == 4 ~ "Organized crime",
+         colaoj21a == 7 ~ "Guerrilla groups",
+         colaoj21a == 8 ~ "BACRIM",
+         colaoj21a == ".b" ~ NA_character_,
+         TRUE ~ "Others"
+      ), "Others"
+   ),
+   # group that guaranteed security a year ago, 5 cat
+   colaoj21b_5c = fct_relevel(
+      case_when(
+         colaoj21b == 3 ~ "Police or military",
+         colaoj21b == 4 ~ "Organized crime",
+         colaoj21b == 7 ~ "Guerrilla groups",
+         colaoj21b == 8 ~ "BACRIM",
+         colaoj21b == ".b" ~ NA_character_,
+         TRUE ~ "Others"
+      ), "Others"
+   ),
+   # reports family member victim of conflict
+   wc_any = fct_relevel(
+     case_when(
+        wc1 == 1 | wc3 == 1 | wc2 == 1 | colwc8 == 1 | colwc9 == 1 ~ "Yes",
+        wc1 == 2 | wc3 == 2 | wc2 == 2 | colwc8 == 2 | colwc9 == 2 ~ "No",
+        TRUE ~ NA_character_
+     ), "No"
+   ),
+   # reports family member victim of conflict in last year
+   wct_recent =  fct_relevel(
+      case_when(
+         wc1t == 1 | wc3t == 1 | wc2t == 1 | colwc8t == 1 | colwc9t == 1 ~ "Yes",
+         wc1t %in% c("2", ".c") | wc3t %in% c("2", ".c") | wc2t %in% c("2", ".c") | 
+            colwc8t %in% c("2", ".c") | colwc9t %in% c("2", ".c") ~ "No",
+         TRUE ~ NA_character_
+      ), "No"
+   ),
+   # group responsible for victimization
+   colwc4a = fct_relevel(
+      case_when(
+         colwc4a == 1 ~ "Guerrilla",
+         TRUE ~ "Other/not a victim"
+      ), "Other/not a victim"
+   ),
+   colwc4b = fct_relevel(
+      case_when(
+         colwc4b == 1 ~ "Paramilitary",
+         TRUE ~ "Other/not a victim"
+      ), "Other/not a victim"
+   ),
+   colwc4d = fct_relevel(
+      case_when(
+         colwc4d == 1 ~ "Army",
+         TRUE ~ "Other/not a victim"
+      ), "Other/not a victim"
+   ),
+   colwc4e = fct_relevel(
+      case_when(
+         colwc4e == 1 ~ "Police",
+         TRUE ~ "Other/not a victim"
+      ), "Other/not a victim"
+   ),
+   colwc4g = fct_relevel(
+      case_when(
+         colwc4g == 1 ~ "BACRIM",
+         TRUE ~ "Other/not a victim"
+      ), "Other/not a victim"
+   ),
+   colwc4c = fct_relevel(
+      case_when(
+         colwc4c == 1 ~ "Remobilized paramilitary",
+         TRUE ~ "Other/not a victim"
+      ), "Other/not a victim"
+   ),
+   colwc4f = fct_relevel(
+      case_when(
+         colwc4a == 1 ~ "Other",
+         TRUE ~ "Other/not a victim"
+      ), "Other/not a victim"
+   ),
+   # registered in government victim registry
+   collt5 = fct_relevel(
+      case_when(
+         collt5 == 1 ~ "Registered",
+         collt5 == 2 ~ "Not registered"
+      ), "Not registered"
+   ),
+   # registered in government victim registry, 4 cat
+   collt5_alt = fct_relevel(
+      case_when(
+         wc_any == "Yes" & collt5 == "Registered" ~ "Victim, registered",
+         wc_any == "Yes" & collt5 == "Not registered" ~ "Victim, not registered",
+         wc_any == "No" & collt5 == "Registered" ~ "Not a victim, registered",
+         wc_any == "No" & collt5 == "Not registered" ~ "Not a victim, not registered",
+      ), "Not a victim, not registered"
+   ),
+   # received reparation from government
+   collt6 = fct_relevel(
+      case_when(
+         collt6 == 1 ~ "Yes",
+         collt6 == 2 ~ "No"
+      ), "No"
+   ),
+   ## party 
+   pn4 = as.numeric(pn4)
+   # proximity to individual parties
+   colvb27a = as.numeric(colvb27a), # PL
+   colvb27b = as.numeric(colvb27b), # CD
+   colvb27c = as.numeric(colvb27c), # PU
+   colvb27d = as.numeric(colvb27d), # PD
+   colvb27e = as.numeric(colvb27e), # CR
+   colvb27f = as.numeric(colvb27f), # PC
+   colvb27g = as.numeric(colvb27g), # AV
+   colvb27h = as.numeric(colvb27h), # CH
+   # sympathizes with a (any) party
+   vb10 = fct_relevel(
+      case_when(
+         vb10 == 1 ~ "Yes", 
+         vb10 == 2 ~ "No"
+      ), "No"
+   ),
+   # traditional party ID
+   vb11_trad = fct_relevel(
+      case_when(
+         vb11 %in% c("801", "802") ~ "Traditional",
+         vb11 == ".b" ~ NA_character_,
+         TRUE ~ "Other"
+      ), "Other"
+   ),
+   # sympathizes with CD
+   vb11_cd = fct_relevel(
+      case_when(
+         vb11 == 829 ~ "CD",
+         vb11 == ".b" ~ NA_character_,
+         TRUE ~ "Other"
+      ), "Other"
+   ),
+   # sympathizes with any government parties
+   vb11_gov = fct_relevel(
+      case_when(
+         vb11 %in% c("829", "802", "804", "810") ~ "Government",
+         vb11 == ".b" ~ NA_character_,
+         TRUE ~ "Other/none"
+      ), "Other/none"
+   ),
+   # sympathizes with any opposition parties
+   vb11_oppo = fct_relevel(
+      case_when(
+         vb11 %in% c("801", "803", "805", "817", "821", "831", "832",
+                     "834", "837", "839", "877") ~ "Opposition",
+         vb11 == ".b" ~ NA_character_,
+         TRUE ~ "Other"
+      ), "Other"
+   ),
+   # sympathizes with parties supporting presidential candidates
+   vb11_cand = fct_relevel(
+      case_when(
+         vb11 %in% c("829", "802", "804", "810") ~ "Duque parties",
+         vb11 %in% c("803", "831", "837", "838") ~ "Petro parties",
+         vb11 %in% c("817", "821") ~ "Fajardo parties",
+         vb11 == ".b" ~ NA_character_,
+         TRUE ~ "Other"
+      ), "Other"
+   ),
+   ## electoral behavior
+   # protest
+   prot3 = fct_relevel(
+      if_else(prot3 == 1, "Yes", "No"), "No"
+   ),
+   # voted in first round
+   vb2 = fct_relevel(
+      case_when(
+         vb2 == 1 ~ "Yes",
+         vb2 == 2 ~ "No"
+      ), "No"
+   ),
+   # vote choice in first round
+   vb3n = fct_relevel(
+      case_when(
+         vb3n == 0 ~ "Unmarked",
+         vb3n == 97 ~ "Null",
+         vb3n == 801 ~ "Duque",
+         vb3n == 802 ~ "Petro",
+         vb3n == 803 ~ "Fajardo",
+         vb3n == 804 ~ "Vargas",
+         vb3n == 805 ~ "De la Calle",
+         vb3n == 877 ~ "Other",
+         vb3n == 899 ~ "Blank",
+         vb3n == ".a" ~ "Does not know"
+      ), "Duque"
+   ),
+   # vote choice in first round, lump
+   vb3n_3cat = fct_relevel(
+      fct_lump_lowfreq(vb3n, other_level = "Other"), "Other"
+   ),
+   # vote choice in first round, pro/anti-agreement
+   vb3n_peace = fct_relevel(
+     case_when(
+        vb3n == "Duque" ~ "Anti-agreement",
+        vb3n %in% c("Petro", "Fajardo", "Vargas", "De la Calle") ~ "Pro-agreement",
+        TRUE ~ NA_character_
+     ), "Pro-agreement" 
+   ),
+   # voted in second round
+   vb2v = fct_relevel(
+      case_when(
+         vb2v == 1 ~ "Yes",
+         vb2v == 2 ~ "No"
+      ), "No"
+   ),
+   # vote choice in second round
+   vb3n2 = fct_relevel(
+      case_when(
+         vb3n2 == 0 ~ "Unmarked",
+         vb3n2 == 97 ~ "Null",
+         vb3n2 == 801 ~ "Duque",
+         vb3n2 == 802 ~ "Petro",
+         vb3n2 == 899 ~ "Blank",
+         vb3n2 == ".a" ~ "Does not know",
+         vb3n2 == ".c" ~ "Did not vote"
+      ), "Duque", "Petro"
+   ),
+   # voted for duque, second round
+   vb3n2_duque = fct_relevel(
+      case_when(
+         vb3n2 %in% c("Unmarked", "Null", "Petro", "Blank", "Does not know", "Did not vote") ~ "Other",
+         vb3n2 == "Duque" ~ "Duque"
+      ), "Other"
+   ),
+   # voted for duque, second round - alt
+   vb3n2_duque2 = fct_relevel(
+      case_when(
+         vb3n2 %in% c("Unmarked", "Null", "Petro", "Blank", "Does not know") ~ "Other",
+         vb3n2 == "Duque" ~ "Duque"
+      ), "Other"
+   ),
+   # voted for petro, second round
+   vb3n2_petro = fct_relevel(
+      case_when(
+         vb3n2 %in% c("Unmarked", "Null", "Duque", "Blank", "Does not know") ~ "Other",
+         vb3n2 == "Petro" ~ "Petro"
+      ), "Other"
+   ),
+   # vote if elections where today
+   vb20 = fct_relevel(
+     case_when(
+        vb20 == 1 ~ "Would not vote",
+        vb20 == 2 ~ "Vote for president's party/candidate",
+        vb20 == 3 ~ "Vote for other candidate",
+        vb20 == 4 ~ "Blank or null vote",
+        vb20 == ".a" ~ "Does not know"
+     ), "Does not know"
+   ),
+   # exchanged vote for goods
+   clien1na = fct_relevel(
+     case_when(
+        clien1na == 1 ~ "Yes",
+        clien1na == 2 ~ "No",
+        clien1na %in% c(".a", ".b") ~ NA_character_
+     ), "No"
+   ),
+   ## interest, political knowledge and media
+   # interest in politics
+   pol1 = as.numeric(pol1),
+   # interest in politics, 3 cat
+   pol1_3c = fct_relevel(
+      case_when(
+         pol1 %in% c(1, 2) ~ "High/some",
+         pol1 == 3 ~ "Little",
+         pol1 == 4 ~ "None"
+      ), "None", "Little"
+   ),
+   # frequency of news
+   gi0n = as.numeric(gi0n),
+   # frequency of news, 3 cat
+   gi0n_3c = fct_relevel(
+      case_when(
+         gi0n == 1 ~ "Daily",
+         gi0n %in% c(2, 3, 4) ~ "Occasionally",
+         gi0n == 5 ~ "Never"
+      ), "Never", "Occasionally"
+   ),
+   # political knowledge, 3 cat
+   conocim_3c = fct_relevel(
+      case_when(
+         conocim %in% c(1, 2) ~ "High",
+         conocim == 3 ~ "Medium",
+         conocim %in% c(4, 5) ~ "Low"
+      ), "Low", "Medium"
+   )
+  )
+```
+
+We save the recoded data as a new file for sourcing later:
+
+```{r save-recode}
+write_rds(data, "output/datos_lapop_2018_recode.rds") 
+```
+
+## Exploring
+
+Let's do some descriptive/exploratory data visualization.
+
+We start by looking at our dependent variables, related to vote choice and voting behavior in the presidential election.
+
+```{r}
+data %>%
+  mutate(vb3n = fct_infreq(vb3n)) %>%
+  ggplot(aes(y = vb3n)) +
+  geom_bar()
+```
+
+There was a runoff between the two top candidates, Duque and Petro. The results were closer than in the previous round:
+
+```{r}
+data %>%
+  mutate(vb3n2 = fct_infreq(vb3n2)) %>%
+  ggplot(aes(y = vb3n2)) +
+  geom_bar()
+```
+
+
+
+Vote for Duque in the runoff election against Petro. In our coding, respondents either report voting for Duque, or not, which includes voting for Petro, as well as not having voted, blank, and not remembering:
+
+```{r}
+data %>%
+  ggplot(aes(vb3n2_duque)) +
+  geom_bar()
+```
+
+Despite being the winner, the majority of respondents reported other options.
+
+## Modelling
+
+We start with a model of participation/turnout. We include several individual-level predictors:
+
+- `wc_any`: Having a family member victim (any type of violence).
+- `collt5`: Registered in government victim registry.
+- `a4_sec`: Considering security issues as the most important.
+- `aoj11`: Feeling insecure in neighborhood
+- `vic1ext`: Victim of crime.
+- `vb10`: Sympathizes with a party (any).
+- `l1_num`: Ideological self-placement (1=left, 10=right).
+- `clien1na`: Exchanged vote for goods.
+- `colvb27b`: Sympathizes with Centro Democrático.
+- `colvb27h`: Sympathizes with Colombia Humana.
+- `pn4`: Satisfaction with democracy.
+- `colpaz1a`: Preferred solution to armed conflict.
+- `colpropaz_sum`: Additive measure of pro-peace beliefs.
+- `colpact20`: Agree to modify peace agreement.
+- `colespa2a`: Approval of FARC electoral participation.
+- `q1`: Gender.
+- `q2`: Age.
+- `ed_sup`: College educated.
+- `etid_white`: White.
+- `colideol_sum`: Additive measure of progressive beliefs.
+- `redist_sum`: Additive measure of approval for redistribution beliefs.
+- `ros_sum`: Additive measure of increased role of state in economy beliefs.
+- `pol1_3c`: Interest in politics.
+- `gi0n_3c`: News frequency.
+- `conocim_3c`: Political knowledge (interviewer assessment).
+
+We estimate the model:
+
+```{r}
+mod_turnout <- glm(
+  vb2 ~ 
+    wc_any + collt5 + a4_sec + aoj11 + vic1ext +
+    vb10 + l1_num + clien1na + colvb27b + colvb27h + as.numeric(pn4) +
+    colpaz1a + colpropaz_sum + colpact20 + colespa2a +
+    q1 + q2 + ed_sup + etid_white + 
+    colideol_sum + redist_sum + ros_sum +
+    pol1_3c + gi0n_3c + conocim_3c +
+    factor(municipio_code), 
+  family = "binomial",
+  data = data
+)
+```
+
+We look at some predictions
+
+```{r}
+mod_turnout %>%
+  ggpredict(terms = c("gi0n_3c")) %>%
+  plot()
+```
+ More interested in vote for Duque:
+ 
+```{r}
+mod_duque <- glm(
+  vb3n2_duque ~ 
+    wc_any + collt5 + a4_sec + aoj11 + vic1ext +
+    vb10 + l1_num + clien1na + colvb27b + colvb27h + pn4 +
+    colpaz1a + colpropaz_sum + colpact20 + colespa2a +
+    q1 + q2 + ed_sup + etid_white + 
+    colideol_sum + redist_sum + ros_sum +
+    pol1_3c + gi0n_3c + conocim_3c +
+    factor(municipio_code), 
+  family = "binomial",
+  data = data
+)
+```
+ 
+```{r}
+mod_duque %>%
+  ggpredict(terms = c("l1_num", "wc_any")) %>%
+  plot()
+```
+
