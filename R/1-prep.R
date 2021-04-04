@@ -3,6 +3,7 @@
 # Load
 library(tidyverse)
 library(janitor)
+library(MatchIt)
 library(cobalt)
 
 # Data ####
@@ -28,6 +29,13 @@ datos <- datos %>%
    # municipality code
    sbjnum,
    municipio_code = as.numeric(str_remove(municipio, "8")),
+   # urban
+   urban = fct_relevel(
+     case_when(
+        ur == 1 ~ "Urban",
+        ur == 2 ~ "Rural"
+     ), "Rural"
+   ),
    upm,
    # region
    region = fct_relevel( 
@@ -494,10 +502,10 @@ rm(cede)
 # measured prior to treatment (or otherwise not be affected by treatment)
 # confounding vars: cause variation in the outcome and selection into treatment
 datos_m <- datos %>%
-   select(region, municipio_size, victim_num, gender, age, ed_cat, etid,
+   select(region, municipio_size, urban, victim_num, gender, age, ed, etid,
           ideology, state_sum, propeace_sum, party_left, vote1_anti, vote2_anti,
           presence_insurgents_cum_log, presence_paramilitaries_cum_log,
-          desplazados_recepcion_cum_log, desplazados_expulsion_cum_log)
+          desplazados_expulsion_cum_log)
 
 # drop NA
 datos_m <- datos_m %>%
@@ -505,22 +513,23 @@ datos_m <- datos_m %>%
 
 # matching
 m.out <- matchit(
-   victim_num ~ region + municipio_size + gender + age + ed_cat +
+   victim_num ~ region + urban + municipio_size + gender + age + ed +
       ideology + state_sum + propeace_sum + party_left +
       presence_insurgents_cum_log + presence_paramilitaries_cum_log +
-      desplazados_recepcion_cum_log + desplazados_expulsion_cum_log, 
-   data = datos_m, method = "nearest", distance = "glm"
+      desplazados_expulsion_cum_log, 
+   data = datos_m, method = "genetic", pop.size = 1000
 )
 
 # look at results
 m.out
 
 # check imbalance before and after
-bal.tab(m.out, thresholds = c(m = 0.1), un = TRUE)
+bal.tab(m.out, thresholds = c(m = 0.1), un = TRUE) 
 
 # love plot to check imbalance graphically
 love.plot(
-   m.out, stats = c("mean.diffs", "variance.ratios"),
+   m.out, 
+   stats = "mean.diffs",
    thresholds = c(m = 0.1, v = 2), 
    abs = TRUE, binary = "std", var.order = "unadjusted"
 )
@@ -530,7 +539,8 @@ datos_match <- match.data(m.out)
 
 # notes: 
 # try other matching methods, including "cem"
-# think about imputing NA with library(MatchThem)
+# multiple imputation with library(mice) or library(Amelia)
+# think about using imputed data and library(MatchThem)
 
 # Save data ####
 
