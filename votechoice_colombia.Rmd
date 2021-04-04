@@ -389,7 +389,7 @@ data <- data %>%
       ), "No"
    ),
    ## party 
-   pn4 = as.numeric(pn4)
+   pn4 = as.numeric(pn4),
    # proximity to individual parties
    colvb27a = as.numeric(colvb27a), # PL
    colvb27b = as.numeric(colvb27b), # CD
@@ -584,6 +584,28 @@ We save the recoded data as a new file for sourcing later:
 write_rds(data, "output/datos_lapop_2018_recode.rds") 
 ```
 
+## Merging
+
+We now load municipal-level data from CEDE:
+
+```{r}
+muni <- read_rds("output/datos_muni_2018.rds") %>%
+   select(codmpio, coddepto, codprovincia, provincia,
+          sgr_acum, ends_with("_total"), starts_with("prop_")) %>%
+   mutate(incup_farc_bin = if_else(incup_farc_total > 0, "Yes", "No"),
+          incup_auc_bin = if_else(incup_auc_total > 0, "Yes", "No"),
+          incup_eln_bin = if_else(incup_eln_total > 0, "Yes", "No"))
+```
+
+And merge it:
+
+```{r}
+data <- data %>%
+   mutate(municipio_code = as.numeric(municipio_code)) %>%
+   left_join(muni, by = c("municipio_code" = "codmpio"))
+rm(muni)
+```
+
 ## Exploring
 
 Let's do some descriptive/exploratory data visualization.
@@ -618,7 +640,7 @@ data %>%
 
 Despite being the winner, the majority of respondents reported other options.
 
-## Modelling
+## Modeling
 
 We start with a model of participation/turnout. We include several individual-level predictors:
 
@@ -658,12 +680,21 @@ mod_turnout <- glm(
     colpaz1a + colpropaz_sum + colpact20 + colespa2a +
     q1 + q2 + ed_sup + etid_white + 
     colideol_sum + redist_sum + ros_sum +
-    pol1_3c + gi0n_3c + conocim_3c +
+    pol1_3c + gi0n_3c + conocim_3c + prop_santos_segunda +
     factor(municipio_code), 
   family = "binomial",
   data = data
 )
 ```
+
+Quick look at the results:
+
+```{r}
+mod_turnout %>%
+   broom::tidy() %>%
+   filter(p.value < 0.05)
+```
+
 
 We look at some predictions
 
@@ -675,7 +706,7 @@ mod_turnout %>%
  More interested in vote for Duque:
  
 ```{r}
-mod_duque <- glm(
+mod_duque <- glmer(
   vb3n2_duque ~ 
     wc_any + collt5 + a4_sec + aoj11 + vic1ext +
     vb10 + l1_num + clien1na + colvb27b + colvb27h + pn4 +
@@ -683,15 +714,25 @@ mod_duque <- glm(
     q1 + q2 + ed_sup + etid_white + 
     colideol_sum + redist_sum + ros_sum +
     pol1_3c + gi0n_3c + conocim_3c +
-    factor(municipio_code), 
+    prop_zuluaga_segunda +
+    (1 | municipio_code), 
   family = "binomial",
   data = data
 )
 ```
+
+Results:
+
+```{r}
+mod_duque %>%
+   broom::tidy() %>%
+   filter(p.value < 0.05)
+```
+
  
 ```{r}
 mod_duque %>%
-  ggpredict(terms = c("l1_num", "wc_any")) %>%
+  ggpredict(terms = c("colespa2a", "a4_sec")) %>%
   plot()
 ```
 
