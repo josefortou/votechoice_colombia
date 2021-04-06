@@ -402,12 +402,12 @@ datos <- datos %>%
 
 # municipal-level data ####
 
-# load violent presence data (VIPAA)
-vipaa <- read_delim("data/ViPPA_v2.csv", 
+# load violent presence data (vippa)
+vippa <- read_delim("data/ViPPA_v2.csv", 
                     "\t", escape_double = FALSE, trim_ws = TRUE)
 
 # aggregate to municipality-year
-vipaa <- vipaa %>%
+vippa <- vippa %>%
    # rename for merging ahead
    rename(codmpio = mun) %>%
    # count number of events per municipality-year-actor type
@@ -431,14 +431,14 @@ cumsum_narm <- function(x) {
 }
 
 # calculate cumulative variables
-vipaa <- vipaa %>%
+vippa <- vippa %>%
    # apply function to select variables and rename columns
    mutate(across(starts_with("presence_"), cumsum_narm, .names = "{.col}_cum")) %>%
    # keep only 2018
    filter(year == 2018)
 
 # calculate logs
-vipaa <- vipaa %>%
+vippa <- vippa %>%
    mutate(
       across(
          presence_insurgents:presence_farc_dissidents_cum, 
@@ -449,15 +449,15 @@ vipaa <- vipaa %>%
    )
 
 # select variables
-vipaa <- vipaa %>%
+vippa <- vippa %>%
    select(codmpio, ends_with("cum_log"))
 
 # merge
 datos <- datos %>%
-   left_join(vipaa, by = c("municipio_code" = "codmpio"))
+   left_join(vippa, by = c("municipio_code" = "codmpio"))
 
-# remove VIPAA dataset
-rm(vipaa)
+# remove vippa dataset
+rm(vippa)
 
 # load CEDE municipality-year panel 
 cede <- read_rds("data/panel_cede_completo.rds")
