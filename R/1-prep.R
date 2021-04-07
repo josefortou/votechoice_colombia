@@ -1,14 +1,12 @@
-# Libraries ####
+# Prep ####
 
-# Load
+# Load libraries
 library(tidyverse)
 library(janitor)
 library(MatchIt)
 library(cobalt)
 
-# Data ####
-
-# Load
+# Load raw survey data
 datos <- read_delim("data/datos_lapop_2018.csv", delim = ";")
 
 # Data cleaning ####
@@ -400,6 +398,17 @@ datos <- datos %>%
    )
   )
 
+# some data cleaning that nee
+datos <- datos %>%
+   mutate(
+      across(
+         c(age, ed, ideology, state_sum, propeace_sum, ends_with("cum_log")), 
+         scale, 
+         .names = "{.col}_re"
+      ),
+      vote1_anti_num = if_else(vote1_anti == "No", 0, 1)
+   )
+
 # municipal-level data ####
 
 # load violent presence data (vippa)
@@ -544,5 +553,6 @@ datos_match <- match.data(m.out)
 
 # Save data ####
 
-write_rds(datos_match, "output/datos_match.rds")
 write_rds(datos, "output/datos.rds")
+write_rds(datos_match, "output/datos_match.rds")
+
