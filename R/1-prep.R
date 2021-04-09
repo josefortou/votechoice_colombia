@@ -2,9 +2,11 @@
 
 # Load libraries
 library(tidyverse)
-library(janitor)
+# library(janitor)
+library(dagitty)
 library(MatchIt)
 library(cobalt)
+library(ggdag)
 
 # Load raw survey data
 datos <- read_delim("data/datos_lapop_2018.csv", delim = ";")
@@ -398,7 +400,7 @@ datos <- datos %>%
    )
   )
 
-# some data cleaning that nee
+# some data recoding for different kinds of analysis
 datos <- datos %>%
    mutate(
       across(
@@ -409,7 +411,7 @@ datos <- datos %>%
       vote1_anti_num = if_else(vote1_anti == "No", 0, 1)
    )
 
-# municipal-level data ####
+# Municipal-level data ####
 
 # load violent presence data (vippa)
 vippa <- read_delim("data/ViPPA_v2.csv", 
@@ -505,7 +507,74 @@ datos <- datos %>%
 # remove CEDE dataset
 rm(cede)
 
-# matching ####
+# DAG ####
+
+node_details <- tribble(
+   ~name, ~label, ~x, ~y,
+   "vic", "Victimization", 1, 1,
+   "vote_choice", "Vote choice", 3, 1,
+   "ses", "SES", 1.5, 2,
+   "pol_att", "Political \nattitudes", 2, 2,
+   # "urban", "Urban ", 1.5, 3,
+   # "gender", "Gender", 2, 3,
+   # "age", "Age", 2.5, 3,
+   # "edu", "Education", 3, 3,
+   # "ethid", "Ethinicity", 3.5, 3,
+   # "relig", "Religious", 4, 3,
+   # "ideol", "Ideology", 4.5, 3,
+   # "party_id", "Party ID", 5, 3,
+   # "pro_peace", "Pro-peace attitudes", 5.5, 3,
+   # "pro_state", "Pro-intervention attitudes", 6, 3,
+   "muni", "Municipality \ncharacteristics", 2.5, 2
+)
+
+node_labels <- node_details$label
+names(node_labels) <- node_details$name
+
+vote_dag <- dagify(
+   # vote_choice ~ vic + muni + urban + age + edu + age + edu + ethid + relig +
+   #    ideol + party_id + pro_peace + pro_state,
+   # vic ~ muni + urban + age + edu + age + edu + ethid + relig +
+   #    ideol + party_id + pro_peace + pro_state,
+   vote_choice ~ vic + muni + ses + pol_att,
+   vic ~ muni + ses + pol_att,
+   exposure = "vic",
+   outcome = "vote_choice",
+   # latent = "Local-lev",
+   coords = node_details,
+   labels = node_labels
+)
+
+vote_dag
+
+# Turn DAG into a tidy data frame for plotting
+vote_dag_tidy <- vote_dag %>% 
+   tidy_dagitty() %>%
+   node_status()   # Add column for exposure/outcome/latent
+
+status_colors <- c(exposure = "#0074D9", outcome = "#FF4136", latent = "grey50")
+
+# Fancier graph
+ggplot(vote_dag_tidy, aes(x = x, y = y, xend = xend, yend = yend)) +
+   geom_dag_edges() +
+   geom_dag_point(aes(color = status)) +
+   geom_dag_label_repel(aes(label = label, fill = status), seed = 1234,
+                        color = "white", fontface = "bold") +
+   scale_color_manual(values = status_colors, na.value = "grey20") +
+   scale_fill_manual(values = status_colors, na.value = "grey20") +
+   guides(color = FALSE, fill = FALSE) + 
+   theme_dag()
+
+# find backdoor paths
+paths(vote_dag)
+
+# find necessary adjustments
+adjustmentSets(vote_dag)
+
+# save
+vote_dag <- write_rds("output/vote_dag.rds")
+
+# Matching ####
 
 # select covariates that are:
 # measured prior to treatment (or otherwise not be affected by treatment)

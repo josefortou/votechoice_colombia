@@ -9,6 +9,7 @@ library(modelsummary)
 
 # load models
 mods_un <- read_rds("output/mods_un.rds")
+datos <- read_rds("output/datos.rds")
 
 # tables ####
 
