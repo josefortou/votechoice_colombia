@@ -9,7 +9,7 @@ library(lme4)
 
 # load data (matched and unmatched)
 datos <- read_rds("output/datos.rds")
-datos_match <- read_rds("output/datos_match.rds")
+match_data <- read_rds("output/match_data.rds")
 
 # regression models: unmatched data ####
 
@@ -61,25 +61,23 @@ write_rds(mods_un, "output/mods_un.rds")
 
 mod_match <- glm(
   vote1_anti ~ factor(victim_num),
-  family = "binomial",
+  family = "quasibinomial",
   weights = weights,
-  data = datos_match
+  data = match_data
 )
 
 mod_match_cov <- glm(
-  vote1_anti ~ factor(victim_num) + region + urban + municipio_size + gender + age + ed +
-    ideology + state_sum + propeace_sum + party_left +
-    presence_insurgents_cum_log + presence_paramilitaries_cum_log +
-    desplazados_expulsion_cum_log,
-  family = "binomial",
+  vote1_anti ~ factor(victim_num) + urban + gender + age + ed + income_family +
+    ideology + democracy_best + support_agree,
+  family = "quasibinomial",
   weights = weights,
-  data = datos_match
+  data = match_data
 )
 
 # make list
 mods <- list(
-  `Unmatched, no covariates` = mod_un,
-  `Unmatched, w covariates` = mod_un_cov,
+  # `Unmatched, no covariates` = mod_un,
+  # `Unmatched, w covariates` = mod_un_cov,
   `Matched, no covariates` = mod_match,
   `Matched, w covariates` = mod_match_cov
 )

@@ -2,28 +2,30 @@
 
 # Load libraries
 library(tidyverse)
-# library(janitor)
+library(here)
 library(dagitty)
-library(MatchIt)
-library(cobalt)
 library(ggdag)
+library(MatchIt)
+library(WeightIt)
+library(cobalt)
 
 # Load raw survey data
-datos <- read_delim("data/datos_lapop_2018.csv", delim = ";")
+ab <- read_delim(here("data", "Colombia2018PUBv2_IsFad1S.csv"), 
+                    delim = ";")
 
 # Data cleaning ####
 
 # recode NA
 # .b = "no responde"
 # .c = "no sabe"
-datos <- datos %>%
+ab_clean <- ab %>%
    mutate(
       across(everything(), ~na_if(.x, ".b")),
       across(everything(), ~na_if(.x, ".c"))
    )
 
 # Recode variables
-datos <- datos %>%
+ab_clean <- ab_clean %>%
   transmute(
    ## geographic
    # municipality code
@@ -74,8 +76,8 @@ datos <- datos %>%
    ),
    # education level
    ed_sup = fct_relevel(
-      if_else(ed > 11, "Tertiary", "Secondary or lower"), "Secondary or lower"
-   ),
+      if_else(ed > 11, "Tertiary", "Secondary or lower"), 
+      "Secondary or lower"),
    # working
    employment = fct_relevel(
       case_when(
@@ -90,6 +92,8 @@ datos <- datos %>%
          formal == 2 ~ "Informal"
       ), "Informal"
    ),
+   # socio-economic group (estrato)
+   estrato = as.factor(colestsoc_col),
    # socio-economic group 3 categories
    estrato_3c = fct_relevel(
       case_when(
@@ -115,38 +119,11 @@ datos <- datos %>%
          colestsoc_col == 7 ~ "Rural",
          ), "Rural", "Lower", "Middle"
    ),
-   # personal income
-   income = as.numeric(q10g),
-   # personal income above minimum wage
-   income_min = fct_relevel(
-      if_else(income > 8, "Above", "Below"), "Below" 
-   ),
    # family income
    income_family = as.numeric(q10new),
    # family income above minimum wage
    income_family_min = fct_relevel(
      if_else(income_family > 8, "Above", "Below"), "Below" 
-   ),
-   # ethnic identity: white
-   white = fct_relevel(
-      case_when(
-         etid == 1 ~ "White",
-         etid %in% c(".a", 2, 3, 4, 5, 7) ~ "Other/does not know",
-      ), "Other"
-   ),
-   # ethnic identity: black
-   black = fct_relevel(
-      case_when(
-         etid == 4 ~ "Black",
-         etid %in% c(".a", 1, 2, 3, 5, 7) ~ "Other/does not know",
-      ), "Other"
-   ),
-   # ethnic identity: indigenous
-   ind = fct_relevel(
-      case_when(
-         etid == 3 ~ "Indigenous",
-         etid %in% c(".a", 1, 2, 4, 5, 7) ~ "Other/does not know",
-      ), "Other"
    ),
    # ethnic identity
    etid = fct_relevel(
@@ -156,8 +133,15 @@ datos <- datos %>%
          etid == 3 ~ "Indigenous",
          etid == 4 ~ "Black",
          etid == 5 ~ "Mulato",
-         etid %in% c(".a", 7) ~ "Other/does not know",
-      ), "Other/does not know"
+         etid %in% c(".a", 7) ~ "Other/don't know",
+      ), "Other/don't know"
+   ),
+   # ethnic identity: minority
+   etid_min = fct_relevel(
+      case_when(
+         etid %in% c(".a", 3, 4, 5, 7) ~ "Minority",
+         etid %in% c(1, 2) ~ "White/mestizo",
+      ), "White/mestizo"
    ),
    ## victimization
    # feels secure/insecure in neighborhood
@@ -176,17 +160,6 @@ datos <- datos %>%
          TRUE ~ NA_character_
       ), "No"
    ),
-   # group responsible for victimization
-   victim_family_group = case_when(
-      colwc4a == "1" ~ "Guerrilla",
-      colwc4b == "1" ~ "Paramilitary",
-      colwc4c == "1" ~ "Army",
-      colwc4d == "1" ~ "Police",
-      colwc4e == "1" ~ "BACRIM",
-      colwc4f == "1" ~ "Remobilized paramilitary",
-      colwc4g == "1" ~ "Other",
-      TRUE ~ NA_character_
-   ),
    # registered in government victim registry RUV
    ruv = fct_relevel(
       case_when(
@@ -198,7 +171,7 @@ datos <- datos %>%
    victim = fct_relevel(
       case_when(
          victim_family == "Yes" | ruv == "Yes" ~ "Yes",
-         TRUE ~ "No"
+         victim_family == "No" & ruv == "No" ~ "No"
       ), "No"
    ),
    victim_num = if_else(victim == "Yes", 1, 0),
@@ -237,7 +210,14 @@ datos <- datos %>%
          idio2 == ".a" ~ NA_character_
       ), "Worse", "Same"
    ),
-   ## ideology
+   ## democracy and ideology
+   democracy_best = as.numeric(ing4),
+   democracy_satisfied = fct_relevel(
+      case_when(
+         pn4 %in% c(1:2) ~ "Yes",
+         pn4 %in% c(3:4) ~ "No"
+      ), "Yes"
+   ),
    # left-right placement, 1-10 scale
    ideology = as.numeric(l1),
    # left-right placement, 2 cat
@@ -266,32 +246,35 @@ datos <- datos %>%
       ), "Left", "Center-left", "Center", "Center-right"
    ),
    # role of state in intervention sum index
-   ros = na_if(
+   ros_sum = na_if(
       replace_na(as.numeric(ros1), 0) + 
          replace_na(as.numeric(ros4), 0), 0
    ),
    # state redistribution sum index
-   redist = na_if(
+   redist_sum = na_if(
       replace_na(as.numeric(redist1), 0) + 
          replace_na(as.numeric(redist2), 0) +
          replace_na(as.numeric(redist3), 0), 0
    ),
-   # state intervention and redistribution
-   state_sum = na_if(replace_na(ros, 0) + replace_na(redist, 0), 0),
+   # state intervention and redistribution sum index
+   state_sum = na_if(replace_na(ros_sum, 0) + replace_na(redist_sum, 0), 0),
    ## conflict, peace and agreements
    # negotiate or use force
-   colpaz1a_negotiate = fct_relevel(
+   negotiation = fct_relevel(
       case_when(
          colpaz1a == 1 ~ "Negotiation",
          colpaz1a %in% c("2" ,"3", ".a") ~ "Other"
       ), "Other"
    ),
-   # pro-peace attitudes
-   across(starts_with("colpropaz"), ~as.numeric(.x)),
-   # pro-peace attitudes sum
-   propeace_sum = na_if(replace_na(colpropaz1b, 0) + replace_na(colpropaz1cn, 0) + 
-      replace_na(colpropaz13c, 0) + replace_na(colpropaz13j, 0) +
-      replace_na(colpropaz13k, 0) + replace_na(colpropaz13m, 0), 0),
+   # reconciliation with farc or eln possible
+   reconciliation = fct_relevel(
+      case_when(
+         colpaz6a == 1 | colpaz6c == 1 ~ "Yes",
+         colpaz6a %in% c("2", ".a") | colpaz6c %in% c("2", ".a") ~ "No/Don't know"
+      ), "No/Don't know"
+   ),
+   # pro-agreement attitudes
+   support_agree = as.numeric(colpropaz1b),
    # in favor of modifying agreements
    reform_agree = as.numeric(colpact20),
    # approve of FARC participating in elections
@@ -309,20 +292,6 @@ datos <- datos %>%
    prox_pu = as.numeric(colvb27c),
    prox_av = as.numeric(colvb27g),
    prox_ch = as.numeric(colvb27h),
-   # right party ID
-   party_right = fct_relevel(
-      case_when(
-         prox_cd > 4 | prox_pu > 4 ~ "Yes",
-         between(prox_cd, 1, 4) | between(prox_pu, 1, 4) > 4 ~ "No"
-      ), "No"
-   ),
-   # left_party ID
-   party_left = fct_relevel(
-      case_when(
-         prox_av > 4 | prox_ch > 4 ~ "Yes",
-         between(prox_av, 1, 4) | between(prox_ch, 1, 4) > 4 ~ "No"
-      ), "No"
-   ),
    ## electoral behavior
    # protest
    protest = fct_relevel(
@@ -337,7 +306,6 @@ datos <- datos %>%
       case_when(
          vb2 == 1 ~ "Yes",
          vb2 == 2 ~ "No",
-         vb2 == ".a" ~ NA_character_
       ), "No"
    ),
    # vote anti-agreement in first round
@@ -348,12 +316,12 @@ datos <- datos %>%
         vb3n == ".a" ~ NA_character_
      ), "No" 
    ),
+   vote1_anti_num = if_else(vote1_anti == "No", 0, 1),
    # voted in second round
    vote2 = fct_relevel(
       case_when(
          vb2v == 1 ~ "Yes",
-         vb2v == 2 ~ "No",
-         vb2v == ".a" ~ NA_character_
+         vb2v == 2 ~ "No"
       ), "No"
    ),
    # vote anti-agreement in first round
@@ -364,6 +332,7 @@ datos <- datos %>%
          vb3n == ".a" ~ NA_character_
       ), "No" 
    ),
+   vote2_anti_num = if_else(vote2_anti == "No", 0, 1),
    # vote anti-agreement post-elections (if elections where today)
    votep_anti = fct_relevel(
      case_when(
@@ -372,14 +341,7 @@ datos <- datos %>%
         vb20 == ".a" ~ NA_character_
      ), "No"
    ),
-   # exchanged vote for goods
-   client = fct_relevel(
-     case_when(
-        clien1na == 1 ~ "Yes",
-        clien1na == 2 ~ "No",
-        clien1na == ".a" ~ NA_character_
-     ), "No"
-   ),
+   votep_anti_num = if_else(votep_anti == "No", 0, 1),
    ## interest, political knowledge and media
    # interest in politics, 3 cat
    interest_cat = fct_relevel(
@@ -400,21 +362,10 @@ datos <- datos %>%
    )
   )
 
-# some data recoding for different kinds of analysis
-datos <- datos %>%
-   mutate(
-      across(
-         c(age, ed, ideology, state_sum, propeace_sum, ends_with("cum_log")), 
-         scale, 
-         .names = "{.col}_re"
-      ),
-      vote1_anti_num = if_else(vote1_anti == "No", 0, 1)
-   )
-
 # Municipal-level data ####
 
 # load violent presence data (vippa)
-vippa <- read_delim("data/ViPPA_v2.csv", 
+vippa <- read_delim(here("data", "ViPPA_v2.csv"), 
                     "\t", escape_double = FALSE, trim_ws = TRUE)
 
 # aggregate to municipality-year
@@ -464,14 +415,14 @@ vippa <- vippa %>%
    select(codmpio, ends_with("cum_log"))
 
 # merge
-datos <- datos %>%
+datos <- ab_clean %>%
    left_join(vippa, by = c("municipio_code" = "codmpio"))
 
 # remove vippa dataset
 rm(vippa)
 
 # load CEDE municipality-year panel 
-cede <- read_rds("data/panel_cede_completo.rds")
+cede <- read_rds(here("data", "panel_cede_completo.rds"))
 
 # select variables
 cede <- cede %>%
@@ -506,6 +457,16 @@ datos <- datos %>%
 
 # remove CEDE dataset
 rm(cede)
+
+# some data recoding for different kinds of analysis
+ab <- ab %>%
+   mutate(
+      across(
+         c(age, ed, ideology, state_sum, propeace_sum, ends_with("cum_log")), 
+         scale, 
+         .names = "{.col}_re"
+      )
+   )
 
 # DAG ####
 
@@ -576,52 +537,71 @@ vote_dag <- write_rds("output/vote_dag.rds")
 
 # Matching ####
 
+# # data
+# ab_clean <- read_rds(here("output", "ab_clean.rds"))
+# dataset <- read_rds(here("output", "datos.rds"))
+
 # select covariates that are:
 # measured prior to treatment (or otherwise not be affected by treatment)
 # confounding vars: cause variation in the outcome and selection into treatment
-datos_m <- datos %>%
-   select(region, municipio_size, urban, victim_num, gender, age, ed, etid,
-          ideology, state_sum, propeace_sum, party_left, vote1_anti, vote2_anti,
-          presence_insurgents_cum_log, presence_paramilitaries_cum_log,
-          desplazados_expulsion_cum_log)
+datos_m <- ab_clean %>%
+   select(vote1_anti, victim_num, urban, gender, age, ed, income_family,
+          ideology, democracy_best, support_agree)
 
 # drop NA
 datos_m <- datos_m %>%
    drop_na()
 
-# matching
-m.out <- matchit(
-   victim_num ~ region + urban + municipio_size + gender + age + ed +
-      ideology + state_sum + propeace_sum + party_left +
-      presence_insurgents_cum_log + presence_paramilitaries_cum_log +
-      desplazados_expulsion_cum_log, 
+# make list of matching methods
+match_methods <- list(
+   `Nearest Neighbor` = "nearest",
+   `Optimal` = "optimal",
+   `Full` = "full",
+   # `Exact` = "exact",
+   `Coarsened Exact` = "cem"
+)
+
+# apply matching methods
+match_out <- match_methods %>%
+   map(~ matchit(
+      victim_num ~ urban + gender + age + ed + income_family +
+         ideology + democracy_best + support_agree,
+      data = datos_m, method = .
+   ))
+
+# genetic matching
+match_gen <- matchit(
+   victim_num ~ urban + gender + age + ed + income_family +
+      ideology + democracy_best + support_agree,
    data = datos_m, method = "genetic", pop.size = 1000
 )
 
-# look at results
-m.out
+match_out[["Genetic"]] <- match_gen
 
 # check imbalance before and after
-bal.tab(m.out, thresholds = c(m = 0.1), un = TRUE) 
+
+match_out %>%
+   map(~ bal.tab(., thresholds = c(m = 0.05), un = TRUE))
 
 # love plot to check imbalance graphically
-love.plot(
-   m.out, 
+match_out %>%
+   # pick "full optimal" matching
+   pluck(3) %>%
+   love.plot(
    stats = "mean.diffs",
-   thresholds = c(m = 0.1, v = 2), 
+   thresholds = c(m = 0.05, v = 2), 
    abs = TRUE, binary = "std", var.order = "unadjusted"
 )
 
 # extract matched data
-datos_match <- match.data(m.out)
-
-# notes: 
-# try other matching methods, including "cem"
-# multiple imputation with library(mice) or library(Amelia)
-# think about using imputed data and library(MatchThem)
+match_data <- match_out %>%
+   pluck(3) %>%
+   match.data()
 
 # Save data ####
 
+# unmatched
 write_rds(datos, "output/datos.rds")
-write_rds(datos_match, "output/datos_match.rds")
 
+# matched
+write_rds(match_data, "output/match_data.rds")
