@@ -309,6 +309,8 @@ datos <- datos %>%
    prox_pu = as.numeric(colvb27c),
    prox_av = as.numeric(colvb27g),
    prox_ch = as.numeric(colvb27h),
+   prox_pl = as.numeric(colvb21a),
+   prox_pc = as.numeric(colvb21f),
    # right party ID
    party_right = fct_relevel(
       case_when(
