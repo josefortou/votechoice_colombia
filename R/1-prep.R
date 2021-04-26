@@ -3,6 +3,7 @@
 # Load libraries
 library(tidyverse)
 library(here)
+library(janitor)
 library(dagitty)
 library(ggdag)
 library(MatchIt)
@@ -365,108 +366,64 @@ ab_clean <- ab_clean %>%
 # Municipal-level data ####
 
 # load violent presence data (vippa)
-vippa <- read_delim(here("data", "ViPPA_v2.csv"), 
+vipaa <- read_delim(here("data", "ViPPA_v2.csv"), 
                     "\t", escape_double = FALSE, trim_ws = TRUE)
 
 # aggregate to municipality-year
-vippa <- vippa %>%
+vipaa <- vipaa %>%
    # rename for merging ahead
    rename(codmpio = mun) %>%
    # count number of events per municipality-year-actor type
    count(codmpio, year, actor_main) %>%
    # pivot so that every row is a municipality-year
-   pivot_wider(names_from = actor_main, names_prefix = "presence_",
+   pivot_wider(names_from = actor_main, names_prefix = "actions_",
                values_from = n, values_fill = 0) %>%
    # clean up variable names
-   clean_names() %>%
-   # complete cases 
-   complete(codmpio, year) %>%
-   # replace NA with 0 and change format to numeric
+   clean_names() %>% 
+   # create total column
+   rowwise(codmpio, year) %>% 
    mutate(
-      across(presence_insurgents:presence_farc_dissidents, ~replace_na(.x, 0)),
-      across(presence_insurgents:presence_farc_dissidents, as.numeric)
-   )
+      actions_total = sum(c(actions_insurgents, actions_criminal_organizations,
+                            actions_government, actions_paramilitaries,
+                            actions_farc_dissidents))
+   ) %>% 
+   ungroup() %>% 
+   # get all existen codmpio-year combinations
+   complete(codmpio, year) %>% 
+   # replace NA with 0
+   mutate(actions_total = replace_na(actions_total, 0)) %>%
+   # select relevant variables
+   select(codmpio, year, actions_total)
 
-# define function to calculate cumulative sums with NA values
-cumsum_narm <- function(x) {
-   cumsum(replace_na(x, 0))
-}
-
-# calculate cumulative variables
-vippa <- vippa %>%
+# calculate cumulative variable
+vipaa <- vipaa %>%
+   # group
+   group_by(codmpio) %>% 
    # apply function to select variables and rename columns
-   mutate(across(starts_with("presence_"), cumsum_narm, .names = "{.col}_cum")) %>%
+   mutate(across(starts_with("actions_"), cumsum, .names = "{.col}_cum")) %>%
+   ungroup() %>% 
    # keep only 2018
    filter(year == 2018)
 
 # calculate logs
-vippa <- vippa %>%
+vipaa <- vipaa %>%
    mutate(
-      across(
-         presence_insurgents:presence_farc_dissidents_cum, 
-         # add 1 to calculate log on 0s
-         ~log(.x + 1), 
-         .names = "{.col}_log"
-      )
-   )
+      actions_total_cum_log = log(actions_total_cum + 0.1)
+   ) 
 
 # select variables
-vippa <- vippa %>%
-   select(codmpio, ends_with("cum_log"))
+vipaa <- vipaa %>%
+   select(codmpio, actions_total_cum, actions_total_cum_log)
 
 # merge
 datos <- ab_clean %>%
-   left_join(vippa, by = c("municipio_code" = "codmpio"))
-
-# remove vippa dataset
-rm(vippa)
-
-# load CEDE municipality-year panel 
-cede <- read_rds(here("data", "panel_cede_completo.rds"))
-
-# select variables
-cede <- cede %>%
-   select(ano, municipio_code = codmpio, 
-          desplazados_recepcion, desplazados_expulsion)
-
-# calculate cumulative variables
-cede <- cede %>%
-   # apply function to select variables and rename columns
-   mutate(across(starts_with("desplazados_"), cumsum_narm, .names = "{.col}_cum")) %>%
-   # keep only 2018
-   filter(ano == 2018)
-
-# calculate logs
-cede <- cede %>%
+   left_join(vipaa, by = c("municipio_code" = "codmpio")) %>%
    mutate(
-      across(
-         starts_with("desplazados_"), 
-         # add 1 to calculate log on 0s
-         ~log(.x + 1), 
-         .names = "{.col}_log"
-      )
+      across(starts_with("actions"), ~replace_na(.x, 0))
    )
 
-# select variables
-cede <- cede %>%
-   select(municipio_code, desplazados_recepcion_cum_log, desplazados_expulsion_cum_log)
-
-# merge
-datos <- datos %>%
-   left_join(cede, by = "municipio_code")
-
-# remove CEDE dataset
-rm(cede)
-
-# some data recoding for different kinds of analysis
-ab <- ab %>%
-   mutate(
-      across(
-         c(age, ed, ideology, state_sum, propeace_sum, ends_with("cum_log")), 
-         scale, 
-         .names = "{.col}_re"
-      )
-   )
+# remove vipaa dataset
+rm(vipaa)
 
 # DAG ####
 
