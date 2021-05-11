@@ -19,8 +19,8 @@ datos %>%
   datasummary_balance(~ vote1_anti, data = .)
 
 # regression results
-msummary(
-  mods_un,
+modelsummary(
+  mods,
   stars = TRUE
 )
 

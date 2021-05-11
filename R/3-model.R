@@ -67,7 +67,7 @@ mod_match <- glm(
 )
 
 mod_match_cov <- glm(
-  vote1_anti ~ factor(victim_num) + urban + gender + age + ed + income_family +
+  vote1_anti ~ victim_num + urban + gender + age + ed + income_family +
     ideology + democracy_best + support_agree,
   family = "quasibinomial",
   weights = weights,
