@@ -8,6 +8,8 @@ library(cobalt)
 
 # Data ####
 
+# LAPOP ####
+
 # Load
 datos <- read_delim("data/datos_lapop_2018.csv", delim = ";")
 
@@ -405,13 +407,12 @@ datos <- datos %>%
 # municipal-level data ####
 
 # load violent presence data (VIPAA)
-vipaa <- read_delim("data/ViPPA_v2.csv", 
-                    "\t", escape_double = FALSE, trim_ws = TRUE)
+vipaa <- read_excel("data/vippa.xlsx")
 
 # aggregate to municipality-year
 vipaa <- vipaa %>%
    # rename for merging ahead
-   rename(codmpio = mun) %>%
+   rename(codmpio = municipio) %>%
    # count number of events per municipality-year-actor type
    count(codmpio, year, actor_main) %>%
    # pivot so that every row is a municipality-year
@@ -548,3 +549,46 @@ datos_match <- match.data(m.out)
 
 write_rds(datos_match, "output/datos_match.rds")
 write_rds(datos, "output/datos.rds")
+
+# CEDE ####
+
+# Load
+
+caract <- read_dta("data/PANEL_CARACTERISTICAS.dta")
+conf <- read_dta("data/PANEL_CONFLICTO_Y_VIOLENCIA(2019).dta")
+
+# Select
+
+caract <- caract%>%
+   select(codmpio, ano, altura, areaoficialkm2, 
+          areaoficialhm2, disbogota, discapital,
+          indrural, pobl_tot)
+
+conf <- conf%>%
+   select(codmpio, ano, desplazados_expulsion, H_coca, coca)
+
+# Data cleaning ####
+
+data_cede <- caract %>%
+   left_join(conf, by = c("codmpio", "ano"))
+
+data_cede <- data_cede%>%
+   group_by(codmpio)%>%
+   mutate(
+      desplazados_expulsion_total = sum(desplazados_expulsion, na.rm = TRUE),
+      desplazados_log = log(desplazados_expulsion_total),
+      altura_log = log(altura),
+      areakm2_log = log(areaoficialkm2),
+      areahm2_log = log(areaoficialhm2),
+      discapital_log = log(discapital),
+      disbogota_log = log(disbogota),
+      pob_log = log(pobl_tot),
+      prop_coca = H_coca/areaoficialhm2)%>%
+   filter(ano == 2018)
+
+datos%>%
+   group_by(vb2v)%>%
+   summarise(
+      prom_paz = mean(colpropaz1b, nar.rm = TRUE)
+   )
+
